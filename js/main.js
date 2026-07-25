@@ -18,9 +18,8 @@ const Main = {
 
         this.showScreen('well');
 
-        // Рост растений теперь идёт только от кликов полива, а не от времени,
-        // поэтому «пока вас не было» больше нечего досчитывать на ферме —
-        // просто приветствуем игрока, если отсутствие было заметным
+        // Рост грядок завязан на абсолютные timestamp'ы (plot.readyAt), поэтому офлайн-прогресс
+        // на ферме досчитывать не нужно — он уже учтён первым же рендером. Тост — просто приветствие
         this.reportOfflineProgress(offlineSeconds);
     },
 
@@ -62,12 +61,32 @@ const Main = {
         }
         if (name === 'market') {
             MarketScreen.renderList();
+            MarketScreen.renderShopList();
         }
     },
 
     renderHeader() {
         document.getElementById('coinsValue').textContent = GameState.data.coins;
         document.getElementById('waterValue').textContent = GameState.data.water;
+
+        const state = GameState.data;
+        const level = state.playerLevel;
+        const currentThreshold = Economy.LEVEL_THRESHOLDS[level - 1];
+        const nextThreshold = Economy.LEVEL_THRESHOLDS[level]; // undefined на максимальном уровне
+
+        document.getElementById('playerLevelValue').textContent = level;
+
+        const xpFill = document.getElementById('xpFill');
+        const xpText = document.getElementById('xpText');
+
+        if (nextThreshold === undefined) {
+            xpFill.style.width = '100%';
+            xpText.textContent = 'MAX';
+        } else {
+            const progress = (state.totalXP - currentThreshold) / (nextThreshold - currentThreshold);
+            xpFill.style.width = `${Math.round(progress * 100)}%`;
+            xpText.textContent = `${state.totalXP - currentThreshold}/${nextThreshold - currentThreshold} XP`;
+        }
     }
 };
 

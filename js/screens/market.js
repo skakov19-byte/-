@@ -6,27 +6,109 @@ const PRICE_VARIANCE = 0.3; // ±30% от базовой цены
 const MarketScreen = {
     priceTimer: null,
     selected: new Set(),
+    activeTab: 'sell',
 
     render() {
         const el = document.getElementById('screen-market');
         el.innerHTML = `
             <div class="market-wrap screen-content">
-                <div class="market-list" id="marketList"></div>
-                <div class="market-actions">
-                    <button id="sellSelectedBtn" class="btn btn-secondary">Продать выбранное</button>
-                    <button id="sellAllBtn" class="btn">Продать всё 💰</button>
+                <div class="market-tabs">
+                    <button class="market-tab ${this.activeTab === 'sell' ? 'active' : ''}" data-tab="sell">Продажа</button>
+                    <button class="market-tab ${this.activeTab === 'shop' ? 'active' : ''}" data-tab="shop">Магазин</button>
                 </div>
-                <button id="upgradesBtn" class="btn btn-earth">Улучшения 🛠️</button>
+                <div class="market-panel" id="marketPanelSell" ${this.activeTab === 'sell' ? '' : 'hidden'}>
+                    <div class="market-list" id="marketList"></div>
+                    <div class="market-actions">
+                        <button id="sellSelectedBtn" class="btn btn-secondary">Продать выбранное</button>
+                        <button id="sellAllBtn" class="btn">Продать всё 💰</button>
+                    </div>
+                    <button id="upgradesBtn" class="btn btn-earth">Улучшения 🛠️</button>
+                </div>
+                <div class="market-panel" id="marketPanelShop" ${this.activeTab === 'shop' ? '' : 'hidden'}>
+                    <div class="shop-list" id="shopList"></div>
+                </div>
             </div>
         `;
 
         document.getElementById('sellAllBtn').addEventListener('click', () => this.sellAll());
         document.getElementById('sellSelectedBtn').addEventListener('click', () => this.sellSelected());
         document.getElementById('upgradesBtn').addEventListener('click', () => this.openUpgrades());
+        this.bindTabs();
 
         this.renderList();
+        this.renderShopList();
         this.priceTick(); // сразу учитываем время, прошедшее пока игра была закрыта
         this.startPriceLoop();
+    },
+
+    bindTabs() {
+        document.querySelectorAll('.market-tab').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                Audio_.click();
+                this.activeTab = btn.dataset.tab;
+
+                document.querySelectorAll('.market-tab').forEach((b) => b.classList.toggle('active', b === btn));
+                document.getElementById('marketPanelSell').hidden = this.activeTab !== 'sell';
+                document.getElementById('marketPanelShop').hidden = this.activeTab !== 'shop';
+
+                if (this.activeTab === 'shop') this.renderShopList();
+            });
+        });
+    },
+
+    // Список семян на продажу: блокировка по уровню игрока, покупка по одному семени за монеты
+    renderShopList() {
+        const list = document.getElementById('shopList');
+        if (!list) return;
+
+        const state = GameState.data;
+        list.innerHTML = Object.entries(Economy.CROPS)
+            .map(([key, crop]) => {
+                const locked = state.playerLevel < crop.unlockLevel;
+                const owned = state.seeds[key] || 0;
+                const disabled = locked || state.coins < crop.seedCost;
+
+                return `
+                    <div class="shop-item ${locked ? 'locked' : ''}">
+                        <img src="${crop.readyImage}" alt="${crop.name}" class="shop-icon" loading="lazy">
+                        <div class="shop-info">
+                            <div class="shop-name">${crop.sproutEmoji} ${crop.name} <span class="shop-owned">×${owned}</span></div>
+                            <div class="shop-desc">⏳ ${Economy.formatDuration(crop.growTime)} · урожай ${crop.yieldAmount} шт</div>
+                            ${locked ? `<div class="lock-text">🔒 Уровень ${crop.unlockLevel}</div>` : ''}
+                        </div>
+                        <button class="btn shop-buy" data-crop="${key}" ${disabled ? 'disabled' : ''}>
+                            ${crop.seedCost} <img src="assets/images/objects/coin.png" alt="монеты" class="coin-icon-inline">
+                        </button>
+                    </div>
+                `;
+            })
+            .join('');
+
+        list.querySelectorAll('.shop-buy').forEach((btn) => {
+            btn.addEventListener('click', () => this.buySeed(btn.dataset.crop));
+        });
+    },
+
+    buySeed(key) {
+        const state = GameState.data;
+        const crop = Economy.CROPS[key];
+
+        if (state.playerLevel < crop.unlockLevel) {
+            UI.showToast(`Откроется на уровне ${crop.unlockLevel}`);
+            return;
+        }
+        if (state.coins < crop.seedCost) {
+            UI.showToast('Не хватает монет 🪙');
+            return;
+        }
+
+        state.coins -= crop.seedCost;
+        state.seeds[key] = (state.seeds[key] || 0) + 1;
+
+        Audio_.coins();
+        UI.showToast(`Куплено семя: ${crop.sproutEmoji} ${crop.name}`);
+        Main.renderHeader();
+        this.renderShopList();
     },
 
     // Раз в секунду проверяет, не пора ли обновить цены (раз в 60 сек)
@@ -167,18 +249,20 @@ const MarketScreen = {
             .map(([key, cfg]) => {
                 const level = state.upgrades[key];
                 const cost = Economy.upgradeCost(key, level);
-                const maxed = key === 'plot' && state.farm.unlockedPlots >= Economy.MAX_PLOTS;
-                const disabled = maxed || state.coins < cost;
+                const requiredLevel = Economy.UPGRADE_UNLOCK_LEVELS[key];
+                const locked = requiredLevel !== undefined && state.playerLevel < requiredLevel;
+                const disabled = locked || state.coins < cost;
 
                 return `
-                    <div class="upgrade-row">
+                    <div class="upgrade-row ${locked ? 'locked' : ''}">
                         <img src="${cfg.image}" alt="${cfg.name}" class="upgrade-icon" loading="lazy">
                         <div class="upgrade-info">
                             <div class="upgrade-name">${cfg.name} <span class="upgrade-level">ур. ${level}</span></div>
                             <div class="upgrade-desc">${cfg.description}</div>
+                            ${locked ? `<div class="lock-text">🔒 Уровень ${requiredLevel}</div>` : ''}
                         </div>
                         <button class="btn upgrade-buy" data-key="${key}" ${disabled ? 'disabled' : ''}>
-                            ${maxed ? 'Макс.' : `${cost} <img src="assets/images/objects/coin.png" alt="монеты" class="coin-icon-inline">`}
+                            ${locked ? '🔒' : `${cost} <img src="assets/images/objects/coin.png" alt="монеты" class="coin-icon-inline">`}
                         </button>
                     </div>
                 `;
@@ -201,9 +285,10 @@ const MarketScreen = {
         const state = GameState.data;
         const level = state.upgrades[key];
         const cost = Economy.upgradeCost(key, level);
+        const requiredLevel = Economy.UPGRADE_UNLOCK_LEVELS[key];
 
-        if (key === 'plot' && state.farm.unlockedPlots >= Economy.MAX_PLOTS) {
-            UI.showToast('Все грядки уже открыты');
+        if (requiredLevel !== undefined && state.playerLevel < requiredLevel) {
+            UI.showToast(`Откроется на уровне ${requiredLevel}`);
             return;
         }
         if (state.coins < cost) {

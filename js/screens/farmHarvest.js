@@ -8,7 +8,7 @@ const FarmHarvest = {
     harvestPlot(index) {
         const state = GameState.data;
         const plot = state.farm.plots[index];
-        if (!plot || !plot.ready) return null;
+        if (!GameState.isPlotReady(plot)) return null;
 
         const crop = Economy.CROPS[plot.type];
         let amount = crop.yieldAmount;
@@ -26,7 +26,23 @@ const FarmHarvest = {
         state.inventory[plot.type] = (state.inventory[plot.type] || 0) + amount;
         state.farm.plots[index] = null;
 
-        return { type: plot.type, amount, event };
+        const xpResult = GameState.gainXP(crop.xpYield);
+
+        return { type: plot.type, amount, event, xpResult };
+    },
+
+    // Обновляет шапку (XP всегда меняется от сбора урожая) и показывает уведомления о новых уровнях
+    handleLevelUps(results) {
+        Main.renderHeader();
+
+        results
+            .filter((r) => r && r.xpResult && r.xpResult.leveledUp)
+            .forEach((r, i) => {
+                setTimeout(() => {
+                    Audio_.coins();
+                    UI.showLevelUp(r.xpResult.newLevel, Economy.unlocksForLevel(r.xpResult.newLevel));
+                }, i * 3200);
+            });
     },
 
     // Запускает встряску клетки и падение плода, возвращает центр клетки для частиц/текста
@@ -49,7 +65,7 @@ const FarmHarvest = {
     // Сбор урожая кликом по одной готовой клетке — сначала встряска, затем сама уборка
     harvestOne(index) {
         const plot = GameState.data.farm.plots[index];
-        if (!plot || !plot.ready) return;
+        if (!GameState.isPlotReady(plot)) return;
 
         Audio_.click();
         const fx = this.playHarvestFx(index);
@@ -66,6 +82,7 @@ const FarmHarvest = {
             if (result.event === 'golden') UI.showToast('✨ Золотой урожай!');
             if (result.event === 'pest') UI.showToast('🐛 Вредители подпортили урожай');
 
+            this.handleLevelUps([result]);
             FarmScreen.renderGrid();
         }, HARVEST_SHAKE_MS);
     },
@@ -73,7 +90,7 @@ const FarmHarvest = {
     // Собирает урожай со всех готовых клеток разом — сначала встряска у каждой, потом сбор
     harvestAll() {
         const readyIndexes = GameState.data.farm.plots
-            .map((plot, index) => (plot && plot.ready ? index : -1))
+            .map((plot, index) => (GameState.isPlotReady(plot) ? index : -1))
             .filter((index) => index !== -1);
 
         if (readyIndexes.length === 0) {
@@ -86,12 +103,14 @@ const FarmHarvest = {
 
         setTimeout(() => {
             const totals = {};
+            const results = [];
             let goldenCount = 0;
             let pestsCount = 0;
 
             readyIndexes.forEach((index) => {
                 const result = this.harvestPlot(index);
                 if (!result) return;
+                results.push(result);
                 totals[result.type] = (totals[result.type] || 0) + result.amount;
                 if (result.event === 'golden') goldenCount++;
                 if (result.event === 'pest') pestsCount++;
@@ -104,6 +123,7 @@ const FarmHarvest = {
             if (goldenCount > 0) UI.showToast(`✨ Золотой урожай! (x${goldenCount})`);
             if (pestsCount > 0) UI.showToast(`🐛 Вредители попортили урожай (x${pestsCount})`);
 
+            this.handleLevelUps(results);
             FarmScreen.renderGrid();
         }, HARVEST_SHAKE_MS);
     }

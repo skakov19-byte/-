@@ -8,33 +8,30 @@ function createDefaultState() {
     return {
         coins: 0,
         water: 0, // общий запас воды в бочке — тратится на полив грядок
+        playerLevel: 1,
+        totalXP: 0,
         well: {
             bucket: 0, // текущая вода в таре у колодца
             bucketMax: Economy.START_BUCKET_MAX
         },
         farm: {
             unlockedPlots: Economy.START_PLOTS,
-            // null — пустая клетка, иначе { type, clicksGiven, clicksNeeded, ready }
+            // null — пустая клетка, иначе { type, plantedAt, readyAt, totalMs }.
+            // Готовность — Date.now() >= readyAt (см. GameState.isPlotReady); totalMs — исходное время
+            // созревания (фиксируется при посадке), клики ускорения сдвигают readyAt раньше
             plots: new Array(Economy.MAX_PLOTS).fill(null)
         },
-        inventory: {
-            carrot: 0,
-            wheat: 0,
-            apple: 0
-        },
+        inventory: Object.fromEntries(Object.keys(Economy.CROPS).map((key) => [key, 0])),
+        // Купленные в Магазине семена — тратятся по одному при посадке на грядку
+        seeds: Object.fromEntries(Object.keys(Economy.CROPS).map((key) => [key, 0])),
         market: {
-            prices: {
-                carrot: Economy.CROPS.carrot.sellPrice,
-                wheat: Economy.CROPS.wheat.sellPrice,
-                apple: Economy.CROPS.apple.sellPrice
-            },
+            prices: Object.fromEntries(Object.entries(Economy.CROPS).map(([key, crop]) => [key, crop.sellPrice])),
             lastPriceUpdate: Date.now()
         },
         upgrades: {
             pump: Economy.START_PUMP_LEVEL,
             container: 0,
             fertilizer: 0,
-            plot: 0,
             autoWater: 0
         },
         lastSaveTime: Date.now()
@@ -71,13 +68,14 @@ const GameState = {
         window.addEventListener('beforeunload', () => this.save());
     },
 
-    // Пересчитывает производные от апгрейдов значения (макс. тары, кол-во грядок).
-    // Уровни апгрейдов — источник истины; этот метод синхронизирует с ними кэш в state
+    // Пересчитывает производные значения (макс. тары, кол-во грядок).
+    // Грядки открываются уровнем игрока (Economy.PLOT_UNLOCK_LEVELS); Math.max — подстраховка от старых
+    // сохранений, где грядки были куплены за монеты ещё до перехода на систему уровней — никогда не отнимаем
     recalcDerived() {
         this.data.well.bucketMax = Economy.START_BUCKET_MAX + 10 * this.data.upgrades.container;
-        this.data.farm.unlockedPlots = Math.min(
-            Economy.MAX_PLOTS,
-            Economy.START_PLOTS + this.data.upgrades.plot
+        this.data.farm.unlockedPlots = Math.max(
+            this.data.farm.unlockedPlots,
+            Economy.plotsForLevel(this.data.playerLevel)
         );
 
         // На случай старых сохранений: если MAX_PLOTS увеличили после релиза,
@@ -103,6 +101,26 @@ const GameState = {
     save() {
         this.data.lastSaveTime = Date.now();
         localStorage.setItem(SAVE_KEY, JSON.stringify(this.data));
+    },
+
+    // Готовность грядки считается по времени (plot.readyAt), а не по сохранённому флагу —
+    // поэтому офлайн-рост работает «бесплатно»: реальное время само подводит растение к готовности
+    isPlotReady(plot) {
+        return !!plot && Date.now() >= plot.readyAt;
+    },
+
+    // Начисляет опыт и пересчитывает уровень игрока.
+    // Возвращает { leveledUp, newLevel } — вызывающий код решает, показывать ли уведомление
+    gainXP(amount) {
+        this.data.totalXP += amount;
+        const newLevel = Economy.levelForXP(this.data.totalXP);
+
+        if (newLevel > this.data.playerLevel) {
+            this.data.playerLevel = newLevel;
+            this.recalcDerived(); // сразу открываем новые грядки, если уровень их даёт
+            return { leveledUp: true, newLevel };
+        }
+        return { leveledUp: false };
     },
 
     // Полный сброс прогресса (для отладки)

@@ -24,6 +24,27 @@ const UI = {
         setTimeout(() => el.remove(), 2500);
     },
 
+    // Показывает крупное уведомление о повышении уровня со списком разблокировок
+    // (растения/грядки/апгрейды — см. Economy.unlocksForLevel)
+    showLevelUp(level, unlocks) {
+        const el = document.createElement('div');
+        el.className = 'level-up-notification';
+        el.innerHTML = `
+            <div class="level-up-content">
+                <h2>🎉 Новый уровень!</h2>
+                <p>Вы достигли уровня ${level}</p>
+                ${unlocks.map((u) => `<p>🔓 Разблокировано: ${u.emoji} ${u.label}</p>`).join('')}
+            </div>
+        `;
+        document.body.appendChild(el);
+
+        requestAnimationFrame(() => el.classList.add('show'));
+        setTimeout(() => {
+            el.classList.remove('show');
+            setTimeout(() => el.remove(), 500);
+        }, 3000);
+    },
+
     // Открывает модалку с произвольным HTML-содержимым, возвращает функцию закрытия.
     // Содержимое лежит в .modal-body — отдельно от кнопки закрытия, чтобы экраны
     // (например магазин апгрейдов) могли обновлять его на месте, не теряя крестик
